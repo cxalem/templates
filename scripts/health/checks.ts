@@ -57,6 +57,12 @@ const stripAnsi = (text: string): string => text.replace(/\x1b(?:\[[0-9;?]*[0-9A
 
 const tail = (text: string, lines = TAIL_LINES): string => stripAnsi(text).trim().split('\n').slice(-lines).join('\n')
 
+// Every detached child this process spawns (installs, builds, audits, dev servers). Tracked
+// so the SIGINT/SIGTERM handler can take out their process groups before exiting. Without
+// this a Ctrl-C mid-boot leaves a dev server holding its port, and the next run can end up
+// probing that stale server instead of its own.
+const activeChildren = new Set<ChildProcess>()
+
 /**
  * SIGKILL a child's entire process group. Package managers spawn grandchildren (next dev,
  * vite, cargo, ...) that a plain child.kill() would orphan — an orphaned dev server holding
@@ -76,6 +82,14 @@ const killProcessTree = (child: ChildProcess): void => {
   }
 }
 
+/** SIGKILL every child tree still running (used by the SIGINT/SIGTERM handlers). */
+export const killActiveChildren = (): number => {
+  const count = activeChildren.size
+  for (const child of activeChildren) killProcessTree(child)
+  activeChildren.clear()
+  return count
+}
+
 /** Spawn a command, capture stdout+stderr, enforce a timeout. Spawned detached so the
  *  command becomes its own process-group leader and killProcessTree can take out its
  *  whole tree on timeout. */
@@ -88,6 +102,7 @@ const run = (command: string, args: string[], cwd: string, timeoutMs: number): P
       shell: false,
       detached: true,
     })
+    activeChildren.add(child)
     let output = ''
     let stdout = ''
     let timedOut = false
@@ -107,10 +122,12 @@ const run = (command: string, args: string[], cwd: string, timeoutMs: number): P
     }, timeoutMs)
     child.on('close', (code) => {
       clearTimeout(timer)
+      activeChildren.delete(child)
       resolve({ code, output, stdout, timedOut, durationMs: Date.now() - start })
     })
     child.on('error', (spawnError) => {
       clearTimeout(timer)
+      activeChildren.delete(child)
       resolve({
         code: -1,
         output: output + `\n${String(spawnError)}`,
@@ -180,9 +197,17 @@ export const sweepOrphanTempDirs = (): number => {
   return removed
 }
 
-/** Wipe this run's in-flight temp dirs (used by the SIGINT/SIGTERM handlers). */
+/** Wipe this run's in-flight temp dirs (used by the SIGINT/SIGTERM handlers). Never throws:
+ *  a dir that can't be removed right now (a child still writing into it) is left for the
+ *  startup sweep of the next run, and the signal handler must not crash on it. */
 export const cleanupActiveTempDirs = (): void => {
-  for (const dir of activeTempDirs) rmSync(dir, { recursive: true, force: true })
+  for (const dir of activeTempDirs) {
+    try {
+      rmSync(dir, { recursive: true, force: true })
+    } catch {
+      /* startup sweep of the next run gets it */
+    }
+  }
   activeTempDirs.clear()
 }
 
@@ -458,6 +483,7 @@ const bootDevServer = async (workDir: string, opts: ResolvedRunOptions): Promise
     env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
     detached: true,
   })
+  activeChildren.add(child)
   let output = ''
   let exited = false
   child.stdout.on('data', (chunk: Buffer) => (output += chunk.toString()))
@@ -514,6 +540,7 @@ const bootDevServer = async (workDir: string, opts: ResolvedRunOptions): Promise
     }
   } finally {
     killProcessTree(child)
+    activeChildren.delete(child)
   }
 }
 

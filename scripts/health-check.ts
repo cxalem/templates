@@ -26,7 +26,13 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { enumerateTemplates } from './health/enumerate.js'
-import { checkTemplate, cleanupActiveTempDirs, sweepOrphanTempDirs, type RunOptions } from './health/checks.js'
+import {
+  checkTemplate,
+  cleanupActiveTempDirs,
+  killActiveChildren,
+  sweepOrphanTempDirs,
+  type RunOptions,
+} from './health/checks.js'
 import { diffReports, diffToMarkdown, toMarkdown } from './health/report.js'
 import { overallStatus } from './health/status.js'
 import type { HealthReport, Status, TemplateRef, TemplateReport } from './health/types.js'
@@ -181,12 +187,15 @@ const main = async () => {
   const cli = parseArgs(process.argv.slice(2))
 
   // Clean up first: a previous run that was Ctrl-C'd can leave install/build artifacts
-  // behind in tmpdir. Sweep them, and make sure our own get wiped on interrupt too.
+  // behind in tmpdir. Sweep them, and make sure our own get wiped on interrupt too. Kill
+  // the detached child trees before the temp dirs go, otherwise a dev server started by
+  // --boot survives the interrupt and keeps its port for the next run to trip over.
   const swept = sweepOrphanTempDirs()
   if (swept > 0) console.error(`Swept ${swept} leftover temp dir(s) from a previous run.`)
   for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     process.on(sig, () => {
-      console.error(`\n${sig} - cleaning up temp dirs...`)
+      const killed = killActiveChildren()
+      console.error(`\n${sig} - stopped ${killed} child process tree(s), cleaning up temp dirs...`)
       cleanupActiveTempDirs()
       process.exit(130)
     })
