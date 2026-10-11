@@ -1,8 +1,9 @@
 /**
  * Safe file access inside a template directory.
  *
- * Every path is resolved against the template directory and rejected when it escapes it (including through
- * symlinks), names an env file, points into install or build output, is binary, or exceeds the size cap.
+ * Every path is resolved against the template directory and rejected when it escapes it, names an env file,
+ * points into install or build output, is binary, or exceeds the size cap. Symlinks are refused outright: the
+ * canonical (realpath) location must equal the lexical one, so a link cannot alias an excluded or outside file.
  */
 
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'fs'
@@ -24,6 +25,9 @@ export type TemplateFileEntry = {
 export type TemplateFileListing = {
   readonly files: readonly TemplateFileEntry[]
   readonly directories: readonly string[]
+  /** directories at maxDepth whose contents were not listed */
+  readonly depthLimited: readonly string[]
+  /** true when the entry cap stopped the walk, so later entries are missing */
   readonly truncated: boolean
 }
 
@@ -74,15 +78,26 @@ export function resolveTemplateFile(template: CatalogTemplate, relativePath: str
   const target = resolve(templateDir, ...segments)
   if (!isInside(templateDir, target)) return err(`Path escapes the template directory: ${requested}`)
 
+  let realTemplateDir: string
   let realTarget: string
   try {
+    realTemplateDir = realpathSync(templateDir)
     realTarget = realpathSync(target)
   } catch {
     return err(`File not found in template ${template.id}: ${segments.join('/')}`)
   }
-  if (!isInside(realpathSync(templateDir), realTarget)) {
-    return err(`Path resolves outside the template directory through a symlink: ${requested}`)
+
+  // The canonical location must be exactly where the lexical path says it is: any symlink along the way is refused,
+  // so a link cannot alias an env file, install output or anything outside the template.
+  if (realTarget !== resolve(realTemplateDir, ...segments)) {
+    return err(`Symlinks are not served; "${requested}" resolves elsewhere. Read the link target by its own path.`)
   }
+  if (!isInside(realTemplateDir, realTarget)) return err(`Path escapes the template directory: ${requested}`)
+  const canonicalSegments = relative(realTemplateDir, realTarget).split(sep)
+  const deniedCanonical = canonicalSegments.find(
+    (segment) => IGNORED_DIRECTORIES.has(segment) || ENV_FILE_PATTERN.test(segment),
+  )
+  if (deniedCanonical) return err(`Access to "${deniedCanonical}" is not allowed.`)
 
   return ok(target)
 }
@@ -115,6 +130,7 @@ export function listTemplateFiles(template: CatalogTemplate, options: ListOption
   const templateDir = resolve(template.dir)
   const files: TemplateFileEntry[] = []
   const directories: string[] = []
+  const depthLimited: string[] = []
   let truncated = false
 
   const walk = (dir: string, depth: number): void => {
@@ -137,7 +153,7 @@ export function listTemplateFiles(template: CatalogTemplate, options: ListOption
         if (IGNORED_DIRECTORIES.has(entry.name)) continue
         directories.push(relativePath)
         if (depth < maxDepth) walk(absolute, depth + 1)
-        else truncated = true
+        else depthLimited.push(relativePath)
         continue
       }
       if (!entry.isFile() || ENV_FILE_PATTERN.test(entry.name)) continue
@@ -146,7 +162,7 @@ export function listTemplateFiles(template: CatalogTemplate, options: ListOption
   }
 
   walk(templateDir, 1)
-  return ok({ files, directories, truncated })
+  return ok({ files, directories, depthLimited, truncated })
 }
 
 export function isEnvFile(name: string): boolean {

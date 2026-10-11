@@ -63,7 +63,7 @@ test('list_templates and get_template return parsable JSON', async () => {
   assert.ok(Array.isArray(template.dependencies))
   assert.equal(
     template.scaffoldCommand,
-    'npm create solana-dapp@latest -t gh:solana-foundation/templates/kit/nextjs nextjs',
+    'npm create solana-dapp@latest -- -t gh:solana-foundation/templates/kit/nextjs nextjs',
   )
 })
 
@@ -94,7 +94,7 @@ test('search, files, scaffold and health tools answer over stdio', async () => {
 
   const health = parseJson(await client.callTool({ name: 'get_health_summary', arguments: {} }))
   assert.equal(typeof health.available, 'boolean')
-  if (!health.available) assert.match(health.note, /pnpm health/)
+  if (!health.available) assert.match(health.note, /pnpm health|PR #420/)
 })
 
 test('errors come back as tool errors instead of protocol failures', async () => {

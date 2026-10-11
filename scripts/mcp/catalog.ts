@@ -6,7 +6,7 @@
  * Every function reads the file system on each call and holds no cache.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { err, ok, type Result } from '../shared/result.js'
 import type { GroupConfig } from '../shared/types.js'
@@ -210,9 +210,10 @@ function readText(path: string): string {
   }
 }
 
+/** True for a regular file only: symlinked README, env or image files are ignored, never followed. */
 function isFile(path: string): boolean {
   try {
-    return statSync(path).isFile()
+    return lstatSync(path).isFile()
   } catch {
     return false
   }

@@ -50,42 +50,72 @@ test('rejects traversal, absolute paths, env files and hidden directories', () =
   assert.match(unwrapError(readTemplateFile(template, 'app')), /not a file/i)
 })
 
-test('rejects symlinks that leave the template, binaries and oversized files', () => {
+test('rejects every symlink, including links to env files and outside the template', () => {
   const template = fixtureTemplate()
   writeFileSync(join(template.dir, '..', 'outside.txt'), 'outside')
+  writeFileSync(join(template.dir, '.env'), 'SECRET=1\n')
   symlinkSync(join(template.dir, '..', 'outside.txt'), join(template.dir, 'escape.txt'))
-  writeFileSync(join(template.dir, 'image.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]))
-  writeFileSync(join(template.dir, 'large.txt'), 'x'.repeat(MAX_FILE_BYTES + 1))
+  symlinkSync(join(template.dir, '.env'), join(template.dir, 'public.txt'))
+  symlinkSync('.env', join(template.dir, 'relative.txt'))
+  symlinkSync('/etc/passwd', join(template.dir, 'passwd.txt'))
+  symlinkSync(join(template.dir, 'src'), join(template.dir, 'linked-dir'))
 
-  assert.match(unwrapError(readTemplateFile(template, 'escape.txt')), /symlink/i)
-  assert.match(unwrapError(readTemplateFile(template, 'image.png')), /binary/i)
-  assert.match(unwrapError(readTemplateFile(template, 'large.txt')), /cap/i)
+  for (const path of ['escape.txt', 'public.txt', 'relative.txt', 'passwd.txt', 'linked-dir/index.ts']) {
+    assert.match(unwrapError(readTemplateFile(template, path)), /symlink/i, `expected "${path}" to be refused`)
+  }
   assert.ok(readTemplateFile(template, 'src/index.ts').ok)
 })
 
-test('lists files with depth and entry caps and skips ignored directories', () => {
+test('rejects binaries and oversized files', () => {
+  const template = fixtureTemplate()
+  writeFileSync(join(template.dir, 'image.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]))
+  writeFileSync(join(template.dir, 'large.txt'), 'x'.repeat(MAX_FILE_BYTES + 1))
+
+  assert.match(unwrapError(readTemplateFile(template, 'image.png')), /binary/i)
+  assert.match(unwrapError(readTemplateFile(template, 'large.txt')), /cap/i)
+})
+
+test('lists files with depth and entry caps and skips ignored directories and symlinks', () => {
   const template = fixtureTemplate()
   writeFileSync(join(template.dir, '.env'), 'SECRET=1')
+  symlinkSync(join(template.dir, 'README.md'), join(template.dir, 'link.md'))
   mkdirSync(join(template.dir, 'node_modules', 'dep'), { recursive: true })
   writeFileSync(join(template.dir, 'node_modules', 'dep', 'index.js'), '')
-  mkdirSync(join(template.dir, 'src', 'deep', 'deeper'), { recursive: true })
-  writeFileSync(join(template.dir, 'src', 'deep', 'deeper', 'leaf.ts'), '')
+  // "a" sorts before its shallow siblings so a depth limit inside it must not hide "src" or "z.txt".
+  mkdirSync(join(template.dir, 'a', 'deep', 'deeper'), { recursive: true })
+  writeFileSync(join(template.dir, 'a', 'deep', 'deeper', 'leaf.ts'), '')
+  writeFileSync(join(template.dir, 'z.txt'), '')
 
   const shallow = listTemplateFiles(template, { maxDepth: 1 })
   assert.ok(shallow.ok)
   if (!shallow.ok) return
   assert.deepEqual(
     shallow.value.files.map((file) => file.path),
-    ['README.md', 'package.json'],
+    ['README.md', 'package.json', 'z.txt'],
   )
-  assert.deepEqual(shallow.value.directories, ['src'])
-  assert.equal(shallow.value.truncated, true)
+  assert.deepEqual(shallow.value.directories, ['a', 'src'])
+  assert.deepEqual(shallow.value.depthLimited, ['a', 'src'])
+  assert.equal(shallow.value.truncated, false)
+
+  const middle = listTemplateFiles(template, { maxDepth: 2 })
+  assert.ok(middle.ok)
+  if (!middle.ok) return
+  assert.deepEqual(middle.value.directories, ['a', 'a/deep', 'src'])
+  assert.deepEqual(middle.value.depthLimited, ['a/deep'])
+  assert.ok(middle.value.files.some((file) => file.path === 'src/index.ts'))
+  assert.ok(middle.value.files.some((file) => file.path === 'z.txt'))
+  assert.equal(middle.value.truncated, false)
 
   const deep = listTemplateFiles(template, { maxDepth: 8 })
   assert.ok(deep.ok)
   if (!deep.ok) return
-  assert.ok(deep.value.files.some((file) => file.path === 'src/deep/deeper/leaf.ts'))
-  assert.ok(!deep.value.files.some((file) => file.path.includes('node_modules') || file.path.endsWith('.env')))
+  assert.ok(deep.value.files.some((file) => file.path === 'a/deep/deeper/leaf.ts'))
+  assert.ok(
+    !deep.value.files.some(
+      (file) => file.path.includes('node_modules') || file.path.endsWith('.env') || file.path === 'link.md',
+    ),
+  )
+  assert.deepEqual(deep.value.depthLimited, [])
   assert.equal(deep.value.truncated, false)
 
   const capped = listTemplateFiles(template, { maxDepth: 8, maxEntries: 2 })

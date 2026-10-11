@@ -7,12 +7,11 @@
 
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import { join } from 'path'
 import { z } from 'zod'
 import { err, ok, type Result } from '../shared/result.js'
 import { findTemplate, loadCatalog, type Catalog, type CatalogTemplate } from './catalog.js'
 import { DEFAULT_MAX_DEPTH, listTemplateFiles, MAX_DEPTH, readTemplateFile } from './files.js'
-import { findTemplateHealth, HEALTH_REPORTS_DIRNAME, loadLatestHealthReport, summarizeHealthReport } from './health.js'
+import { findTemplateHealth, loadLatestHealthReport, summarizeHealthReport } from './health.js'
 import { buildScaffoldCommand, PACKAGE_MANAGERS } from './scaffold.js'
 import { filterTemplates, searchTemplates } from './search.js'
 
@@ -32,7 +31,6 @@ export type PublicTemplate = Omit<CatalogTemplate, 'dir'>
 
 export function createTemplatesServer(rootDir: string): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION })
-  const healthReportsDir = join(rootDir, HEALTH_REPORTS_DIRNAME)
 
   server.registerTool(
     'list_templates',
@@ -120,7 +118,7 @@ export function createTemplatesServer(rootDir: string): McpServer {
     {
       title: 'List template files',
       description:
-        'List files and directories inside a template (install and build output, .git and env files are skipped). Depth and entry counts are capped; "truncated" tells you when the listing is partial.',
+        'List files and directories inside a template (install and build output, .git, env files and symlinks are skipped). "depthLimited" names directories not descended because of maxDepth; "truncated" means the entry cap stopped the walk.',
       inputSchema: {
         id: idSchema,
         maxDepth: z
@@ -149,7 +147,7 @@ export function createTemplatesServer(rootDir: string): McpServer {
     {
       title: 'Get template file',
       description:
-        'Read one text file from a template by template-relative path. Env files, install and build output, binaries and files above 200 KB are refused.',
+        'Read one text file from a template by template-relative path. Env files, install and build output, symlinks, binaries and files above 200 KB are refused.',
       inputSchema: {
         id: idSchema,
         path: z.string().min(1).describe('Template-relative path, for example "README.md" or "src/app/page.tsx".'),
@@ -214,7 +212,7 @@ export function createTemplatesServer(rootDir: string): McpServer {
       annotations: { readOnlyHint: true },
     },
     () => {
-      const loaded = loadLatestHealthReport(healthReportsDir)
+      const loaded = loadLatestHealthReport(rootDir)
       if (!loaded.available) return jsonResult(loaded)
       return jsonResult({ available: true, ...summarizeHealthReport(loaded.reportPath, loaded.report) })
     },
@@ -230,7 +228,7 @@ export function createTemplatesServer(rootDir: string): McpServer {
       annotations: { readOnlyHint: true },
     },
     ({ id }) => {
-      const loaded = loadLatestHealthReport(healthReportsDir)
+      const loaded = loadLatestHealthReport(rootDir)
       if (!loaded.available) return jsonResult(loaded)
       const template = findTemplateHealth(loaded.report, id.trim().replace(/^\/+|\/+$/g, ''))
       if (!template) {

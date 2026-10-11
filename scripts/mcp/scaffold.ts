@@ -1,7 +1,9 @@
 /**
  * Build the create-solana-dapp command for a template.
  *
- * The flag and giget reference follow README.md: `npm create solana-dapp@latest -t gh:<repo>/<path>`.
+ * The flag and giget reference follow README.md: `npm create solana-dapp@latest -t gh:<repo>/<path>`. For npm the
+ * initializer arguments come after `--`, otherwise npm itself consumes `-t` (its `--tag` shorthand). pnpm and yarn
+ * forward the arguments as is, which is the form CI uses in .github/workflows/test-templates.yml.
  */
 
 import { err, ok, type Result } from '../shared/result.js'
@@ -23,7 +25,7 @@ const GIGET_PREFIX = 'gh:'
 const PROJECT_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i
 
 const CREATE_COMMANDS: Readonly<Record<PackageManager, string>> = {
-  npm: 'npm create solana-dapp@latest',
+  npm: 'npm create solana-dapp@latest --',
   pnpm: 'pnpm create solana-dapp@latest',
   yarn: 'yarn create solana-dapp',
 }

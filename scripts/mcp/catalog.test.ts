@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -95,6 +95,26 @@ test('classifies templates and detects credentials from a fixture repository', (
   assert.equal(web.hasOgImage, false)
   assert.equal(catalog.value.templates[0].kind, 'rust')
   assert.equal(catalog.value.templates[0].needsSecrets, false)
+})
+
+test('never follows symlinked README, env or image files', () => {
+  const rootDir = createFixtureRepository()
+  writeJson(join(rootDir, 'kit', 'linked', 'package.json'), { name: 'linked', description: 'd', keywords: ['k'] })
+  writeText(join(rootDir, 'outside.md'), '# Outside heading\n')
+  writeText(join(rootDir, 'outside.env'), 'API_KEY=\n')
+  symlinkSync(join(rootDir, 'outside.md'), join(rootDir, 'kit', 'linked', 'README.md'))
+  symlinkSync(join(rootDir, 'outside.env'), join(rootDir, 'kit', 'linked', '.env.example'))
+  symlinkSync(join(rootDir, 'outside.md'), join(rootDir, 'kit', 'linked', 'og-image.png'))
+
+  const catalog = loadCatalog(rootDir)
+  assert.ok(catalog.ok)
+  if (!catalog.ok) return
+  const linked = catalog.value.templates.find((template) => template.id === 'kit/linked')
+  assert.ok(linked)
+  assert.equal(linked.readmePath, null)
+  assert.deepEqual(linked.readmeHeadings, [])
+  assert.equal(linked.needsSecrets, false)
+  assert.equal(linked.hasOgImage, false)
 })
 
 test('env key and heading helpers ignore comments and values', () => {

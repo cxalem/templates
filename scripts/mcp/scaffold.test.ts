@@ -12,7 +12,17 @@ test('builds the create-solana-dapp command documented in README.md', () => {
   const npm = buildScaffoldCommand(catalog, 'kit/nextjs', 'npm', 'my-app')
   assert.ok(npm.ok, npm.ok ? '' : npm.error)
   if (!npm.ok) return
-  assert.equal(npm.value.command, 'npm create solana-dapp@latest -t gh:solana-foundation/templates/kit/nextjs my-app')
+  assert.equal(
+    npm.value.command,
+    'npm create solana-dapp@latest -- -t gh:solana-foundation/templates/kit/nextjs my-app',
+  )
+  // npm would consume -t (its --tag shorthand); after "--" the initializer receives it as its own argument.
+  const npmArgs = npm.value.command.split(' ')
+  assert.deepEqual(npmArgs.slice(npmArgs.indexOf('--') + 1), [
+    '-t',
+    'gh:solana-foundation/templates/kit/nextjs',
+    'my-app',
+  ])
   assert.equal(npm.value.templateRef, 'gh:solana-foundation/templates/kit/nextjs')
   assert.equal(npm.value.projectName, 'my-app')
 

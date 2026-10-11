@@ -2,7 +2,7 @@
  * Loader for the most recent templates health report (`pnpm health` writes health-reports/<timestamp>.json).
  *
  * The directory is gitignored and often absent, so a missing report is a normal, non-error answer that tells the
- * agent how to produce one.
+ * agent how to produce one, or that the health check itself is not in this checkout yet.
  */
 
 import { existsSync, readdirSync, readFileSync } from 'fs'
@@ -10,8 +10,11 @@ import { join } from 'path'
 import type { HealthReport, HealthStatus, TemplateHealthReport } from './health-types.js'
 
 export const HEALTH_REPORTS_DIRNAME = 'health-reports'
+export const HEALTH_CHECK_SCRIPT = 'scripts/health-check.ts'
 export const HEALTH_UNAVAILABLE_NOTE =
   'No health report found. Run `pnpm health` in the templates repository to generate health-reports/<timestamp>.json, then call this tool again.'
+export const HEALTH_CHECK_MISSING_NOTE =
+  'The templates health check is not in this checkout yet (solana-foundation/templates PR #420 adds `pnpm health`). The health tools return available: false until it lands and a report has been generated.'
 
 export type HealthLoadResult =
   | { readonly available: true; readonly reportPath: string; readonly report: HealthReport }
@@ -37,9 +40,11 @@ export type HealthSummary = {
   readonly templates: readonly TemplateHealthSummary[]
 }
 
-/** Load the newest report in `reportsDir`, picking by file name (reports are named by ISO timestamp). */
-export function loadLatestHealthReport(reportsDir: string): HealthLoadResult {
-  if (!existsSync(reportsDir)) return { available: false, note: HEALTH_UNAVAILABLE_NOTE }
+/** Load the newest report in `<rootDir>/health-reports`, picking by file name (reports are named by ISO timestamp). */
+export function loadLatestHealthReport(rootDir: string): HealthLoadResult {
+  const reportsDir = join(rootDir, HEALTH_REPORTS_DIRNAME)
+  const note = existsSync(join(rootDir, HEALTH_CHECK_SCRIPT)) ? HEALTH_UNAVAILABLE_NOTE : HEALTH_CHECK_MISSING_NOTE
+  if (!existsSync(reportsDir)) return { available: false, note }
 
   const candidates = readdirSync(reportsDir)
     .filter((name) => name.endsWith('.json'))
@@ -51,7 +56,7 @@ export function loadLatestHealthReport(reportsDir: string): HealthLoadResult {
     if (report) return { available: true, reportPath, report }
   }
 
-  return { available: false, note: HEALTH_UNAVAILABLE_NOTE }
+  return { available: false, note }
 }
 
 export function summarizeHealthReport(reportPath: string, report: HealthReport): HealthSummary {

@@ -61,16 +61,19 @@ To serve a different checkout than the one the script lives in, pass `--root`: `
 
 ## Safety boundaries
 
-- Only files inside a template directory listed in root `package.json` `repokit.groups` are readable. Paths are resolved and checked after symlink resolution; `..`, absolute paths and symlinks that leave the template are refused.
-- `.env`, `.env.*` (including `.env.example`), `node_modules`, `.git`, `dist`, `build`, `out`, `target`, `.next`, `.expo`, `.turbo` and `coverage` are never listed or served. Credential variable names found in `.env.example` are reported as `credentialKeys` on the template instead, so an agent knows what to configure without reading the file.
+- Only files inside a template directory listed in root `package.json` `repokit.groups` are readable. `..` and absolute paths are refused. Symlinks are refused outright: the canonical path (after `realpath`) must be exactly where the requested path points, so a link cannot alias an env file, install output or anything outside the template. Listings skip symlinks, and the catalog ignores a symlinked README, `.env.example` or `og-image.png`.
+- `.env`, `.env.*` (including `.env.example`), `node_modules`, `.git`, `dist`, `build`, `out`, `target`, `.next`, `.expo`, `.turbo` and `coverage` are never listed or served. `.env.example` stays denied on purpose: its placeholders are already surfaced as `credentialKeys` on the template, so an agent knows what to configure without reading the file.
 - Binary files and files above 200 KB are refused. Listings stop at a configurable depth (default 3, max 8) and 500 entries.
-- Nothing is executed: `get_scaffold_command` returns a string, and the agent or the user decides whether to run it. Project names are validated to letters, numbers, dots, dashes and underscores.
+- Nothing is executed: `get_scaffold_command` returns a string, and the agent or the user decides whether to run it. Project names are validated to letters, numbers, dots, dashes and underscores. The npm form puts the initializer arguments after `--` (`npm create solana-dapp@latest -- -t gh:... my-app`) because npm would otherwise consume `-t` as its own `--tag` flag; pnpm and yarn forward the arguments as is, the same way CI calls them.
 - The server does no network access. All answers come from the local checkout.
 - Absolute paths of the checkout are not included in tool output.
 
 ## Health reports and `pnpm health`
 
-`get_health_summary` and `get_template_health` read the newest `health-reports/*.json` file written by the templates health check (`pnpm health`). That directory is gitignored and reports are produced locally, so on a fresh checkout both tools answer `{"available": false, "note": "..."}` with the instruction to run `pnpm health`. Run it (or `pnpm health --only kit/nextjs` for one template), then call the tool again; the newest report is picked by file name, which is the run timestamp.
+`get_health_summary` and `get_template_health` read the newest `health-reports/*.json` file written by the templates health check (`pnpm health`). That directory is gitignored and reports are produced locally, so on a fresh checkout both tools answer `{"available": false, "note": "..."}`. The note depends on the checkout:
+
+- If `scripts/health-check.ts` exists, it says to run `pnpm health` (or `pnpm health --only kit/nextjs` for one template). Run it, then call the tool again; the newest report is picked by file name, which is the run timestamp.
+- If it does not exist, the health check is not in this checkout yet (it lands with solana-foundation/templates PR #420) and the note says so. The tools keep returning `available: false` until that PR is merged and a report has been generated.
 
 The server only reads reports. It never triggers a health run, because that installs and builds templates and can take a long time.
 
