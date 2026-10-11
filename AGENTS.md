@@ -17,6 +17,7 @@ This file gives AI coding agents the minimum context needed to work safely in th
 - `pnpm format` formats repo files.
 - `pnpm health` runs the templates health check (install + build + deps/audit/deprecation/doc-drift). See `docs/agents/health-check.md`.
 - `pnpm health:test` runs the health check's own unit tests.
+- `pnpm mcp` starts the templates MCP server over stdio so coding agents can query the catalog, read template files and get scaffold commands. See `docs/agents/templates-mcp.md`.
 
 ## Editing Rules
 

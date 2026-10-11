@@ -40,6 +40,7 @@ Most new externally maintained templates belong under `community/` unless a main
 - `scripts/validate.ts` validates generated metadata shape.
 - `scripts/create-image.ts` creates template `og-image.png` assets.
 - `scripts/clean.ts` removes `templates.json` and `TEMPLATES.md`.
+- `scripts/mcp-server.ts` and `scripts/mcp/` expose the catalog, template files, scaffold commands and the latest health report to coding agents over MCP (`pnpm mcp`, see `templates-mcp.md`).
 
 ## CI
 
