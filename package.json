@@ -11,6 +11,8 @@
     "health": "tsx scripts/health-check.ts",
     "health:test": "tsx --test scripts/health/*.test.ts",
     "lint": "tsx scripts/lint.ts && prettier --check . && tsc --noEmit",
+    "mcp": "tsx scripts/mcp-server.ts",
+    "mcp:test": "tsx --test scripts/mcp/*.test.ts",
     "security:check": "tsx scripts/security-check.ts",
     "security:test": "tsx --test scripts/security/*.test.ts",
     "typecheck": "tsc --noEmit",
@@ -22,6 +24,7 @@
   "author": "Solana Developers",
   "license": "MIT",
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@types/node": "^24.5.2",
     "@types/react": "^19.2.17",
     "@vercel/og": "^0.7.2",
@@ -32,7 +35,8 @@
     "sharp": "^0.35.5",
     "tsx": "^4.19.2",
     "typescript": "^7.0.2",
-    "yaml": "^2.8.1"
+    "yaml": "^2.8.1",
+    "zod": "^4.6.5"
   },
   "repokit": {
     "groups": [
