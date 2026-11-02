@@ -1,28 +1,31 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, before, test } from 'node:test'
+import { MAX_METADATA_BYTES } from './catalog.js'
 import { CATALOG_RESOURCE_URI, readmeUri } from './server.js'
 
 const ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const ENTRY = join(ROOT_DIR, 'scripts', 'mcp-server.ts')
 
 const client = new Client({ name: 'templates-mcp-test', version: '0.0.0' })
+const fixtureClient = new Client({ name: 'templates-mcp-fixture-test', version: '0.0.0' })
+let fixtureRoot = ''
 
 before(async () => {
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: ['--import', 'tsx', ENTRY, '--root', ROOT_DIR],
-    cwd: ROOT_DIR,
-    stderr: 'pipe',
-  })
-  await client.connect(transport)
+  await client.connect(transportFor(ROOT_DIR))
+  fixtureRoot = createFixtureRoot()
+  await fixtureClient.connect(transportFor(fixtureRoot))
 })
 
 after(async () => {
   await client.close()
+  await fixtureClient.close()
+  rmSync(fixtureRoot, { force: true, recursive: true })
 })
 
 test('lists the expected tools and resources over stdio', async () => {
@@ -123,6 +126,62 @@ test('resources serve the catalog and a template README', async () => {
   assert.equal(readme.contents[0].mimeType, 'text/markdown')
   assert.match(resourceText(readme.contents[0]), /#/)
 })
+
+test('a malformed manifest or an oversized README never takes the catalog down', async () => {
+  const list = parseJson(await fixtureClient.callTool({ name: 'list_templates', arguments: {} }))
+  assert.deepEqual(
+    list.templates.map((template: { id: string }) => template.id),
+    ['kit/big'],
+  )
+  assert.deepEqual(
+    list.skipped.map((entry: { id: string }) => entry.id),
+    ['kit/null'],
+  )
+  assert.match(list.skipped[0].reason, /not a JSON object/)
+
+  const template = parseJson(await fixtureClient.callTool({ name: 'get_template', arguments: { id: 'kit/big' } }))
+  assert.deepEqual(template.readmeHeadings, ['Early'])
+
+  const search = parseJson(await fixtureClient.callTool({ name: 'search_templates', arguments: { query: 'late' } }))
+  assert.deepEqual(search.hits, [])
+
+  const readme = await fixtureClient.callTool({
+    name: 'get_template_file',
+    arguments: { id: 'kit/big', path: 'README.md' },
+  })
+  assert.equal(readme.isError, true)
+  assert.match(textOf(readme), /cap/)
+
+  const health = parseJson(await fixtureClient.callTool({ name: 'get_health_summary', arguments: {} }))
+  assert.equal(health.available, false)
+})
+
+function transportFor(rootDir: string): StdioClientTransport {
+  return new StdioClientTransport({
+    command: process.execPath,
+    args: ['--import', 'tsx', ENTRY, '--root', rootDir],
+    cwd: ROOT_DIR,
+    stderr: 'pipe',
+  })
+}
+
+/** A repository with one valid template whose README is above the metadata cap, one null manifest and a malformed health report. */
+function createFixtureRoot(): string {
+  const rootDir = mkdtempSync(join(tmpdir(), 'templates-mcp-server-'))
+  const write = (path: string, content: string) => {
+    mkdirSync(dirname(join(rootDir, path)), { recursive: true })
+    writeFileSync(join(rootDir, path), content)
+  }
+  write(
+    'package.json',
+    JSON.stringify({ name: 'fixture', repokit: { groups: [{ name: 'Kit', description: 'Kit', path: 'kit' }] } }),
+  )
+  write('kit/big/package.json', JSON.stringify({ name: 'big', description: 'Big README', keywords: ['big'] }))
+  write('kit/big/README.md', `# Early\n${'x'.repeat(MAX_METADATA_BYTES)}\n# Late\n`)
+  write('kit/null/package.json', 'null\n')
+  write('health-reports/2026-01-01T00-00-00.json', '{"schemaVersion":1,"summary":null,"templates":[null]}')
+  return rootDir
+}
 
 function parseJson(result: Awaited<ReturnType<Client['callTool']>>) {
   assert.notEqual(result.isError, true, textOf(result))

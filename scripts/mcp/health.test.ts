@@ -8,6 +8,7 @@ import {
   findTemplateHealth,
   HEALTH_CHECK_SCRIPT,
   HEALTH_REPORTS_DIRNAME,
+  isHealthReport,
   loadLatestHealthReport,
   summarizeHealthReport,
 } from './health.js'
@@ -80,6 +81,44 @@ test('loads the newest valid report and summarizes it', () => {
 
   assert.equal(findTemplateHealth(loaded.report, 'kit/nextjs')?.status, 'warn')
   assert.equal(findTemplateHealth(loaded.report, 'kit/nope'), undefined)
+})
+
+test('falls back past a newest report that is malformed below the top level', () => {
+  const rootDir = createTempRoot(false)
+  const dir = join(rootDir, HEALTH_REPORTS_DIRNAME)
+  mkdirSync(dir)
+  const valid = fixtureReport('2026-07-01T10:00:00.000Z', 'warn')
+  writeFileSync(join(dir, '2026-07-01T10-00-00.json'), JSON.stringify(valid))
+  writeFileSync(
+    join(dir, '2026-08-01T10-00-00.json'),
+    '{"schemaVersion":1,"generatedAt":"x","packageManager":"npm","options":{},"summary":null,"templates":[null]}',
+  )
+  writeFileSync(
+    join(dir, '2026-08-02T10-00-00.json'),
+    JSON.stringify({ ...valid, templates: [{ ...valid.templates[0], status: 'bogus' }] }),
+  )
+  writeFileSync(
+    join(dir, '2026-08-03T10-00-00.json'),
+    JSON.stringify({ ...valid, templates: [{ ...valid.templates[0], build: { note: 'no status' } }] }),
+  )
+  writeFileSync(join(dir, '2026-08-04T10-00-00.json'), JSON.stringify({ ...valid, summary: { total: '2' } }))
+  writeFileSync(join(dir, '2026-08-05T10-00-00.json'), JSON.stringify([valid]))
+
+  for (const [input, expected] of [
+    [valid, true],
+    [{ ...valid, templates: [] }, true],
+    [{ ...valid, options: null }, false],
+    [{ ...valid, generatedAt: 1 }, false],
+    [{ ...valid, templates: [{ ...valid.templates[0], needsSecrets: 'no' }] }, false],
+  ] as const) {
+    assert.equal(isHealthReport(input), expected)
+  }
+
+  const loaded = loadLatestHealthReport(rootDir)
+  assert.ok(loaded.available)
+  if (!loaded.available) return
+  assert.equal(loaded.reportPath, join(dir, '2026-07-01T10-00-00.json'))
+  assert.equal(summarizeHealthReport(loaded.reportPath, loaded.report).summary.total, 2)
 })
 
 function fixtureReport(generatedAt: string, nextjsStatus: 'warn' | 'fail'): HealthReport {

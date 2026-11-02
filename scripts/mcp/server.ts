@@ -37,7 +37,7 @@ export function createTemplatesServer(rootDir: string): McpServer {
     {
       title: 'List templates',
       description:
-        'List every template in the solana-foundation/templates catalog with its id, kind, group, description and keywords. Optional filters narrow by group, kind or whether the template needs credentials.',
+        'List every template in the solana-foundation/templates catalog with its id, kind, group, description and keywords. Optional filters narrow by group, kind or whether the template needs credentials. "skipped" names template directories whose package.json could not be read, with the reason.',
       inputSchema: {
         group: groupSchema.optional(),
         kind: kindSchema.optional(),
@@ -56,6 +56,7 @@ export function createTemplatesServer(rootDir: string): McpServer {
             groups: catalog.groups,
             total: templates.length,
             templates: templates.map(toListEntry),
+            skipped: catalog.skipped,
           })
         }),
       ),

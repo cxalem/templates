@@ -7,7 +7,7 @@
 
 import { existsSync, readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
-import type { HealthReport, HealthStatus, TemplateHealthReport } from './health-types.js'
+import type { HealthDimension, HealthReport, HealthStatus, TemplateHealthReport } from './health-types.js'
 
 export const HEALTH_REPORTS_DIRNAME = 'health-reports'
 export const HEALTH_CHECK_SCRIPT = 'scripts/health-check.ts'
@@ -77,9 +77,13 @@ export function findTemplateHealth(report: HealthReport, id: string): TemplateHe
   return report.templates.find((template) => template.id === id)
 }
 
+const DIMENSION_NAMES = ['build', 'rust', 'boot', 'deps', 'audit', 'deprecation', 'docDrift'] as const
+const HEALTH_STATUSES: ReadonlySet<string> = new Set<HealthStatus>(['pass', 'warn', 'fail', 'skip'])
+const SUMMARY_COUNTS = ['total', 'pass', 'warn', 'fail', 'skip'] as const
+
 function summarizeTemplate(template: TemplateHealthReport): TemplateHealthSummary {
   const dimensions: Record<string, HealthStatus> = {}
-  for (const name of ['build', 'rust', 'boot', 'deps', 'audit', 'deprecation', 'docDrift'] as const) {
+  for (const name of DIMENSION_NAMES) {
     const dimension = template[name]
     if (dimension) dimensions[name] = dimension.status
   }
@@ -95,12 +99,41 @@ function summarizeTemplate(template: TemplateHealthReport): TemplateHealthSummar
 
 function parseHealthReport(path: string): HealthReport | null {
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as Partial<HealthReport>
-    if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.templates) || typeof parsed.summary !== 'object') {
-      return null
-    }
-    return parsed as HealthReport
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf-8'))
+    return isHealthReport(parsed) ? parsed : null
   } catch {
     return null
   }
+}
+
+/**
+ * True when every field the health tools read is present with the expected type. A report that fails this is
+ * skipped so the loader can fall back to an older valid one instead of crashing inside a handler.
+ */
+export function isHealthReport(value: unknown): value is HealthReport {
+  if (!isRecord(value) || value.schemaVersion !== 1) return false
+  if (typeof value.generatedAt !== 'string' || typeof value.packageManager !== 'string') return false
+  if (!isRecord(value.options) || !isRecord(value.summary)) return false
+  const summary = value.summary
+  if (!SUMMARY_COUNTS.every((key) => typeof summary[key] === 'number')) return false
+  return Array.isArray(value.templates) && value.templates.every(isTemplateHealthReport)
+}
+
+function isTemplateHealthReport(value: unknown): value is TemplateHealthReport {
+  if (!isRecord(value)) return false
+  if (typeof value.id !== 'string' || typeof value.kind !== 'string' || !isStatus(value.status)) return false
+  if (typeof value.needsSecrets !== 'boolean') return false
+  return DIMENSION_NAMES.every((name) => value[name] === undefined || isDimension(value[name]))
+}
+
+function isDimension(value: unknown): value is HealthDimension {
+  return isRecord(value) && isStatus(value.status)
+}
+
+function isStatus(value: unknown): value is HealthStatus {
+  return typeof value === 'string' && HEALTH_STATUSES.has(value)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
